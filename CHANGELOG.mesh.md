@@ -3,7 +3,7 @@
 This file records fork-only changes. Upstream release history remains in
 `CHANGELOG.md`.
 
-## Unreleased
+## mesh-v0.5.0-2 — 2026-07-23
 
 - Add a bounded, broker-invoked Screenshot portal helper. It can inspect the
   portal, create a single app-scoped `screenshot/screenshot=yes` record for

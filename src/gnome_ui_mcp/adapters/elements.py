@@ -260,7 +260,8 @@ def navigate_menu(
 def get_focused_element() -> dict:
     """Return metadata about the focused element. Raises on failure."""
     result = _require(_desktop_accessibility.get_focused_element())
-    return result
+    element = result.get("element")
+    return element if isinstance(element, dict) else result
 
 
 def get_element_properties(element_id: str) -> dict:

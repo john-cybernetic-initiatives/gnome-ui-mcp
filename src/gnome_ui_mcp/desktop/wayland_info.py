@@ -8,7 +8,7 @@ from .types import JsonDict
 def wayland_info(filter_protocol: str | None = None) -> JsonDict:
     try:
         result = subprocess.run(
-            ["wayland-info", "--interface"],
+            ["/usr/bin/wayland-info"],
             capture_output=True,
             text=True,
             timeout=10,

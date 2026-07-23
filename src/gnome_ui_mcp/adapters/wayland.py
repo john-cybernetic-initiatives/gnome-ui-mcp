@@ -9,7 +9,7 @@ def list_protocols(filter_protocol: str | None = None) -> list[str]:
     """Return Wayland protocol names. Raises on failure."""
     try:
         result = subprocess.run(
-            ["wayland-info", "--interface"],
+            ["/usr/bin/wayland-info"],
             capture_output=True,
             text=True,
             timeout=10,

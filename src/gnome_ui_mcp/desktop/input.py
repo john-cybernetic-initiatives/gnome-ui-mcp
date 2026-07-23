@@ -1343,6 +1343,94 @@ def _validate_screenshot_path(filename: str | None) -> Path:
     return output
 
 
+def _screenshot_via_screencast(output_path: Path) -> tuple[bool, str]:
+    """Capture one frame when GNOME blocks its legacy screenshot D-Bus API.
+
+    GNOME 49 no longer permits third-party callers to use
+    ``org.gnome.Shell.Screenshot``.  The server already exposes the Shell
+    screencast capability, so use a short recording and extract its first
+    frame without enabling Shell unsafe mode.
+    """
+    from . import screencast
+
+    recording_path: Path | None = None
+    recording_started = False
+    try:
+        started = screencast.screen_record_start(framerate=10, draw_cursor=False)
+        if started.get("success") is False:
+            raise RuntimeError(str(started.get("error", "Screencast start failed")))
+        recording_started = True
+        started_path = str(started.get("path", ""))
+        if not started_path:
+            raise RuntimeError("Screencast start returned no recording path")
+        recording_path = Path(started_path)
+
+        time.sleep(0.8)
+        stopped = screencast.screen_record_stop()
+        recording_started = False
+        stopped_path = str(stopped.get("path", ""))
+        if stopped_path:
+            recording_path = Path(stopped_path)
+        if stopped.get("success") is False:
+            raise RuntimeError(str(stopped.get("error", "Screencast stop failed")))
+        if recording_path is None or not recording_path.is_file():
+            raise RuntimeError("Screencast produced no recording file")
+
+        extracted = subprocess.run(
+            [
+                "/usr/bin/ffmpeg",
+                "-hide_banner",
+                "-loglevel",
+                "error",
+                "-y",
+                "-i",
+                str(recording_path),
+                "-frames:v",
+                "1",
+                str(output_path),
+            ],
+            capture_output=True,
+            timeout=15,
+            check=False,
+            env=_child_process_env(),
+        )
+        if extracted.returncode != 0 or not output_path.is_file():
+            raise RuntimeError("ffmpeg could not extract a screenshot frame")
+        return True, str(output_path)
+    finally:
+        if recording_started:
+            screencast.screen_record_stop()
+        if recording_path is not None:
+            recording_cache = (Path.home() / ".cache" / "gnome-ui-mcp" / "recordings").resolve()
+            resolved_recording = recording_path.resolve()
+            if resolved_recording.is_relative_to(recording_cache):
+                resolved_recording.unlink(missing_ok=True)
+
+
+def _screenshot_area_via_screencast(
+    x: int,
+    y: int,
+    width: int,
+    height: int,
+    output_path: Path,
+) -> tuple[bool, str]:
+    if Image is None:
+        raise RuntimeError("Pillow is required for the GNOME 49 screenshot fallback")
+
+    success, filename_used = _screenshot_via_screencast(output_path)
+    if not success:
+        return success, filename_used
+
+    scale = get_display_scale_factor()
+    with Image.open(filename_used) as image:
+        left = x * scale
+        top = y * scale
+        right = left + width * scale
+        bottom = top + height * scale
+        image.crop((left, top, right, bottom)).save(filename_used)
+    return True, filename_used
+
+
 def screenshot_info() -> JsonDict:
     try:
         Gio.DBusProxy.new_for_bus_sync(
@@ -1380,8 +1468,11 @@ def screenshot(
 
     try:
         success, filename_used = _screenshot_dbus(str(output))
-    except (GLib.Error, RuntimeError) as exc:
-        return {"success": False, "error": str(exc)}
+    except (GLib.Error, RuntimeError):
+        try:
+            success, filename_used = _screenshot_via_screencast(output)
+        except (OSError, RuntimeError, subprocess.SubprocessError) as exc:
+            return {"success": False, "error": str(exc)}
 
     if not success:
         return {"success": False, "error": "Shell screenshot returned failure"}
@@ -1473,8 +1564,11 @@ def screenshot_area(
 
     try:
         success, filename_used = _screenshot_area_dbus(x, y, width, height, str(output))
-    except (GLib.Error, RuntimeError) as exc:
-        return {"success": False, "error": str(exc)}
+    except (GLib.Error, RuntimeError):
+        try:
+            success, filename_used = _screenshot_area_via_screencast(x, y, width, height, output)
+        except (OSError, RuntimeError, subprocess.SubprocessError) as exc:
+            return {"success": False, "error": str(exc)}
 
     if not success:
         return {"success": False, "error": "Shell ScreenshotArea returned failure"}

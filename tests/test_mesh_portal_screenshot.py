@@ -33,3 +33,15 @@ def test_property_value_accepts_unpacked_portal_properties() -> None:
             return Result()
 
     assert portal_screenshot.property_value(Proxy(), "interface", "version") == 2
+
+
+def test_permission_store_arguments_match_the_portal_signature() -> None:
+    value = portal_screenshot.permission_variant()
+    assert value.get_type_string() == "(sbssas)"
+    assert value.unpack() == (
+        "screenshot",
+        True,
+        "screenshot",
+        "ai.cyberneticinitiatives.GnomeUiMcp",
+        ["yes"],
+    )

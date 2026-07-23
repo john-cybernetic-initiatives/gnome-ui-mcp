@@ -3,6 +3,11 @@
 This file records fork-only changes. Upstream release history remains in
 `CHANGELOG.md`.
 
+## mesh-v0.5.0-4 — 2026-07-23
+
+- Correct the GNOME Permission Store `SetPermission` argument order for the
+  Ubuntu 26.04 portal implementation.
+
 ## mesh-v0.5.0-3 — 2026-07-23
 
 - Add hidden `.desktop` metadata for the portal application identity. The

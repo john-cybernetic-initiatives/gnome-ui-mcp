@@ -74,6 +74,13 @@ def permission_values(permission_store: Gio.DBusProxy) -> list[str]:
     return list(result.unpack()[0])
 
 
+def permission_variant() -> GLib.Variant:
+    return GLib.Variant(
+        "(sbssas)",
+        (PERMISSION_TABLE, True, PERMISSION_ID, APP_ID, [PERMISSION_VALUE]),
+    )
+
+
 def screenshot_versions(connection: Gio.DBusConnection) -> tuple[int, int]:
     portal_properties = dbus_proxy(
         connection,
@@ -199,10 +206,7 @@ def run(action: str) -> dict[str, object]:
     )
     permission_store.call_sync(
         "SetPermission",
-        GLib.Variant(
-            "(bsssas)",
-            (True, PERMISSION_TABLE, PERMISSION_ID, APP_ID, [PERMISSION_VALUE]),
-        ),
+        permission_variant(),
         Gio.DBusCallFlags.NONE,
         5_000,
         None,

@@ -3,6 +3,12 @@
 This file records fork-only changes. Upstream release history remains in
 `CHANGELOG.md`.
 
+## mesh-v0.5.0-3 — 2026-07-23
+
+- Add hidden `.desktop` metadata for the portal application identity. The
+  broker installs it in the selected user's applications directory before
+  registering the identity; it does not expose an application launcher.
+
 ## mesh-v0.5.0-2 — 2026-07-23
 
 - Add a bounded, broker-invoked Screenshot portal helper. It can inspect the

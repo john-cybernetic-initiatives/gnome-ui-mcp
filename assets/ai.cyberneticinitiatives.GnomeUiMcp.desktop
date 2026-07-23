@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=GNOME UI MCP Portal Integration
+Comment=Application identity metadata for GNOME UI MCP portal requests
+Exec=/usr/bin/true
+NoDisplay=true
+StartupNotify=false
+Categories=System;

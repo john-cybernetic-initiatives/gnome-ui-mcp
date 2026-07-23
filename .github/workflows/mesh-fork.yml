@@ -1,0 +1,39 @@
+name: mesh-fork
+
+on:
+  push:
+    branches:
+      - "mesh/**"
+    tags:
+      - "mesh-v*"
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    env:
+      UV_FROZEN: "1"
+      UV_NO_MANAGED_PYTHON: "1"
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v7
+        with:
+          version: "0.10.10"
+      - name: Install native dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            python3 python3-venv python3-gi gir1.2-atspi-2.0 gir1.2-gtk-3.0 \
+            gnome-screenshot wl-clipboard wayland-utils tesseract-ocr \
+            python3-numpy python3-scipy ffmpeg
+      - name: Bootstrap upstream environment
+        run: ./scripts/bootstrap.sh
+      - name: Verify upstream before overlay
+        run: ./scripts/check.sh
+      - name: Install fork capability layer
+        run: ./scripts/install-mesh-capabilities.sh
+      - name: Verify fork after overlay
+        run: ./scripts/check-mesh.sh

@@ -1,0 +1,6 @@
+# Fork-only capability layer. Keep exact pins and do not merge these into the
+# upstream uv.lock. See MAINTAINING.md for the required installation order.
+pytesseract==0.3.13
+Pillow==12.3.0
+numpy==2.5.1
+scipy==1.18.0

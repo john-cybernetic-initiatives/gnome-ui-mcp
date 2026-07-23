@@ -1,0 +1,15 @@
+schema_version = 1
+release = "mesh-v0.5.0-1"
+fork_repository = "https://github.com/john-cybernetic-initiatives/gnome-ui-mcp"
+upstream_repository = "https://github.com/asattelmaier/gnome-ui-mcp"
+upstream_tag = "v0.5.0"
+upstream_commit = "338029886449eb7aa212cd4076c1b574a18fb6fb"
+expected_tools = 113
+expected_categories = 14
+excluded_tools = ["analyze_screenshot", "compare_screenshots"]
+
+[capabilities]
+pytesseract = "0.3.13"
+Pillow = "12.3.0"
+numpy = "2.5.1"
+scipy = "1.18.0"

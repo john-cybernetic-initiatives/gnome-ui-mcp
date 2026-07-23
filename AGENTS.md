@@ -41,3 +41,26 @@ tools (`find_elements`, `click_element`, `set_element_text`, ...) remain
 available as advanced building blocks.
 
 See `docs/design-principles.md` and `docs/architecture.md` for the full model.
+
+## Mesh maintenance fork
+
+- Read `MAINTAINING.md` before changing fork-only code, dependencies, tags,
+  remotes, authentication, or deployment behavior.
+- Keep the original repository configured as the `upstream` remote. The
+  maintainer-owned fork is `origin`.
+- Treat `mesh-fork.toml` as the machine-readable source of truth for upstream
+  provenance, the maintenance tag, tool policy, and capability versions.
+- Fork releases use `mesh-v<upstream-version>-<patch>` tags. Do not create an
+  upstream-style `v*` tag from a maintenance branch because that triggers the
+  upstream registry, image, and Pages release workflow.
+- Preserve the upstream `uv.lock`. Install the fork capability layer only from
+  `requirements/mesh-capabilities.txt`, after upstream frozen checks pass.
+- Run `./scripts/check.sh` before installing the capability layer. After the
+  layer is installed, run `./scripts/check-mesh.sh`; do not run an unfrozen
+  `uv sync` or `uv run` that can rewrite the upstream lock or remove the layer.
+- Keep reusable GNOME compatibility fixes in this fork. Keep bearer-token
+  rotation, broker catalogs, and MeshCentral node authorization in the
+  `mesh-central` repository. Never commit credentials or token values.
+- Every fork patch needs a regression test and an entry in
+  `CHANGELOG.mesh.md`. Update the pinned commit in MeshCentral only after the
+  fork branch is clean and the maintenance tag has been pushed.

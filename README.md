@@ -6,6 +6,22 @@ It exposes GNOME desktop inspection and interaction through AT-SPI for discovery
 
 For navigation it follows a snapshot-driven model: take a snapshot of the active window to get stable element uids, then `click`/`fill`/`hover`/`fill_form` those uids. Stale uids are rejected rather than silently mis-targeted, and actions auto-wait for the UI to settle. See [Navigation](#navigation) below.
 
+## Mesh maintenance fork
+
+The `mesh/full-capabilities-*` branches are native, broker-ready maintenance
+branches based on exact upstream releases. They add reviewed GNOME
+compatibility fixes, an authenticated loopback HTTP launcher, a filtered local
+stdio launcher, and a separately pinned OCR/media capability layer.
+The maintained fork is
+[`john-cybernetic-initiatives/gnome-ui-mcp`](https://github.com/john-cybernetic-initiatives/gnome-ui-mcp).
+
+Do not expose the upstream HTTP launcher to a broker: it does not provide the
+fork's bearer-authentication boundary. Use `mesh_authenticated_server.py` for
+authenticated loopback HTTP and `mesh_local_stdio_server.py` for local Codex
+stdio. Installation order, release policy, and upstream synchronization are
+documented in [MAINTAINING.md](MAINTAINING.md); machine-readable provenance is
+in [mesh-fork.toml](mesh-fork.toml).
+
 ## Requirements
 
 - Linux host with GNOME Shell on Wayland

@@ -3,6 +3,13 @@
 This file records fork-only changes. Upstream release history remains in
 `CHANGELOG.md`.
 
+## Unreleased
+
+- Add a bounded, broker-invoked Screenshot portal helper. It can inspect the
+  portal, create a single app-scoped `screenshot/screenshot=yes` record for
+  this fork identity, verify one non-interactive capture, and delete that
+  test image. It contains no broker credentials or deployment state.
+
 ## mesh-v0.5.0-1 — 2026-07-22
 
 - Add an authenticated loopback HTTP launcher and a filtered local stdio

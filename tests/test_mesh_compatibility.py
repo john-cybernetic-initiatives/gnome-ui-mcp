@@ -65,6 +65,62 @@ def test_screenshot_uses_screencast_fallback_on_dbus_denial(tmp_path: Path) -> N
     assert result["path"] == str(output)
 
 
+def test_authenticated_screenshot_backend_uses_only_scoped_portal(
+    tmp_path: Path,
+) -> None:
+    output = tmp_path / "screenshot.png"
+
+    def capture(path: Path) -> tuple[bool, str]:
+        path.write_bytes(b"portal-png")
+        return True, str(path)
+
+    with (
+        patch.dict(
+            input_mod.os.environ,
+            {input_mod.SCREENSHOT_BACKEND_ENVIRONMENT: "portal"},
+        ),
+        patch.object(input_mod, "_validate_screenshot_path", return_value=output),
+        patch.object(input_mod, "_screenshot_dbus") as dbus,
+        patch.object(input_mod, "_screenshot_via_portal", side_effect=capture) as portal,
+        patch.object(input_mod, "_screenshot_via_screencast") as screencast,
+        patch.object(input_mod, "get_display_scale_factor", return_value=1),
+        patch.object(input_mod, "Image", None),
+    ):
+        result = input_mod.screenshot()
+
+    assert result["success"] is True
+    assert result["path"] == str(output)
+    portal.assert_called_once_with(output)
+    dbus.assert_not_called()
+    screencast.assert_not_called()
+
+
+def test_auto_screenshot_prefers_portal_before_screencast(tmp_path: Path) -> None:
+    output = tmp_path / "screenshot.png"
+
+    def capture(path: Path) -> tuple[bool, str]:
+        path.write_bytes(b"portal-png")
+        return True, str(path)
+
+    with (
+        patch.dict(
+            input_mod.os.environ,
+            {input_mod.SCREENSHOT_BACKEND_ENVIRONMENT: "auto"},
+        ),
+        patch.object(input_mod, "_validate_screenshot_path", return_value=output),
+        patch.object(input_mod, "_screenshot_dbus", side_effect=RuntimeError("denied")),
+        patch.object(input_mod, "_screenshot_via_portal", side_effect=capture) as portal,
+        patch.object(input_mod, "_screenshot_via_screencast") as screencast,
+        patch.object(input_mod, "get_display_scale_factor", return_value=1),
+        patch.object(input_mod, "Image", None),
+    ):
+        result = input_mod.screenshot()
+
+    assert result["success"] is True
+    portal.assert_called_once_with(output)
+    screencast.assert_not_called()
+
+
 def test_screencast_fallback_extracts_first_frame(tmp_path: Path) -> None:
     recording = tmp_path / "recording.webm"
     recording.write_bytes(b"video")

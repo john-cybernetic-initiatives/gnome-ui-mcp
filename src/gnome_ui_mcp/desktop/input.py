@@ -38,6 +38,7 @@ GNOME_SHELL_SCREENSHOT_BUS = "org.gnome.Shell.Screenshot"
 GNOME_SHELL_SCREENSHOT_PATH = "/org/gnome/Shell/Screenshot"
 GNOME_SHELL_SCREENSHOT_IFACE = "org.gnome.Shell.Screenshot"
 GNOME_SCREENSHOT_WELL_KNOWN_NAME = "org.gnome.Screenshot"
+SCREENSHOT_BACKEND_ENVIRONMENT = "GNOME_UI_MCP_SCREENSHOT_BACKEND"
 MUTTER_REMOTE_DESKTOP_BUS = "org.gnome.Mutter.RemoteDesktop"
 MUTTER_REMOTE_DESKTOP_PATH = "/org/gnome/Mutter/RemoteDesktop"
 MUTTER_REMOTE_DESKTOP_IFACE = "org.gnome.Mutter.RemoteDesktop"
@@ -1407,6 +1408,27 @@ def _screenshot_via_screencast(output_path: Path) -> tuple[bool, str]:
                 resolved_recording.unlink(missing_ok=True)
 
 
+def _screenshot_via_portal(output_path: Path) -> tuple[bool, str]:
+    from . import portal_screenshot
+
+    return portal_screenshot.capture(output_path)
+
+
+def _full_screenshot(output_path: Path) -> tuple[bool, str]:
+    backend = os.environ.get(SCREENSHOT_BACKEND_ENVIRONMENT, "auto").lower()
+    if backend == "portal":
+        return _screenshot_via_portal(output_path)
+    if backend != "auto":
+        raise RuntimeError(f"{SCREENSHOT_BACKEND_ENVIRONMENT} must be 'auto' or 'portal'")
+    try:
+        return _screenshot_dbus(str(output_path))
+    except (GLib.Error, RuntimeError):
+        try:
+            return _screenshot_via_portal(output_path)
+        except (GLib.Error, OSError, RuntimeError):
+            return _screenshot_via_screencast(output_path)
+
+
 def _screenshot_area_via_screencast(
     x: int,
     y: int,
@@ -1418,6 +1440,30 @@ def _screenshot_area_via_screencast(
         raise RuntimeError("Pillow is required for the GNOME 49 screenshot fallback")
 
     success, filename_used = _screenshot_via_screencast(output_path)
+    if not success:
+        return success, filename_used
+
+    scale = get_display_scale_factor()
+    with Image.open(filename_used) as image:
+        left = x * scale
+        top = y * scale
+        right = left + width * scale
+        bottom = top + height * scale
+        image.crop((left, top, right, bottom)).save(filename_used)
+    return True, filename_used
+
+
+def _screenshot_area_via_portal(
+    x: int,
+    y: int,
+    width: int,
+    height: int,
+    output_path: Path,
+) -> tuple[bool, str]:
+    if Image is None:
+        raise RuntimeError("Pillow is required for portal area screenshots")
+
+    success, filename_used = _screenshot_via_portal(output_path)
     if not success:
         return success, filename_used
 
@@ -1467,12 +1513,9 @@ def screenshot(
         return {"success": False, "error": str(exc)}
 
     try:
-        success, filename_used = _screenshot_dbus(str(output))
-    except (GLib.Error, RuntimeError):
-        try:
-            success, filename_used = _screenshot_via_screencast(output)
-        except (OSError, RuntimeError, subprocess.SubprocessError) as exc:
-            return {"success": False, "error": str(exc)}
+        success, filename_used = _full_screenshot(output)
+    except (GLib.Error, OSError, RuntimeError, subprocess.SubprocessError) as exc:
+        return {"success": False, "error": str(exc)}
 
     if not success:
         return {"success": False, "error": "Shell screenshot returned failure"}
@@ -1562,13 +1605,26 @@ def screenshot_area(
         output = CACHE_DIR / f"screenshot-area-{int(time.time() * 1000)}.png"
         output.parent.mkdir(parents=True, exist_ok=True)
 
+    backend = os.environ.get(SCREENSHOT_BACKEND_ENVIRONMENT, "auto").lower()
     try:
-        success, filename_used = _screenshot_area_dbus(x, y, width, height, str(output))
-    except (GLib.Error, RuntimeError):
-        try:
-            success, filename_used = _screenshot_area_via_screencast(x, y, width, height, output)
-        except (OSError, RuntimeError, subprocess.SubprocessError) as exc:
-            return {"success": False, "error": str(exc)}
+        if backend == "portal":
+            success, filename_used = _screenshot_area_via_portal(x, y, width, height, output)
+        elif backend == "auto":
+            try:
+                success, filename_used = _screenshot_area_dbus(x, y, width, height, str(output))
+            except (GLib.Error, RuntimeError):
+                try:
+                    success, filename_used = _screenshot_area_via_portal(
+                        x, y, width, height, output
+                    )
+                except (GLib.Error, OSError, RuntimeError):
+                    success, filename_used = _screenshot_area_via_screencast(
+                        x, y, width, height, output
+                    )
+        else:
+            raise RuntimeError(f"{SCREENSHOT_BACKEND_ENVIRONMENT} must be 'auto' or 'portal'")
+    except (GLib.Error, OSError, RuntimeError, subprocess.SubprocessError) as exc:
+        return {"success": False, "error": str(exc)}
 
     if not success:
         return {"success": False, "error": "Shell ScreenshotArea returned failure"}

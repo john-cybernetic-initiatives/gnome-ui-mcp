@@ -111,9 +111,14 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def configure_runtime() -> None:
+    os.environ.setdefault("GNOME_UI_MCP_SCREENSHOT_BACKEND", "portal")
+
+
 async def serve(token_file: str, port: int) -> None:
     if not 1 <= port <= 65535:
         raise RuntimeError("The MCP port must be between 1 and 65535.")
+    configure_runtime()
     config = uvicorn.Config(
         build_app(token_file),
         host=_BIND_HOST,

@@ -3,6 +3,14 @@
 This file records fork-only changes. Upstream release history remains in
 `CHANGELOG.md`.
 
+## mesh-v0.5.0-5 — 2026-07-23
+
+- Route authenticated HTTP screenshot and OCR capture through the scoped XDG
+  Screenshot portal identity. The runtime consumes the broker-installed
+  permission but never creates or changes it.
+- Keep the legacy Shell and screencast/ffmpeg capture paths only in automatic
+  compatibility mode for non-broker contexts.
+
 ## mesh-v0.5.0-4 — 2026-07-23
 
 - Correct the GNOME Permission Store `SetPermission` argument order for the

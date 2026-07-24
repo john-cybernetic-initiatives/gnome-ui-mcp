@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import atexit
 import os
+import select
 import shutil
 import subprocess
 import threading
@@ -102,6 +103,13 @@ class _MutterRemoteDesktopInput:
         self._stream_path: str | None = None
         self._stage_area: _StageArea | None = None
         self._started = False
+        self._clipboard_proxy: Gio.DBusProxy | None = None
+        self._clipboard_context: GLib.MainContext | None = None
+        self._clipboard_loop: GLib.MainLoop | None = None
+        self._clipboard_thread: threading.Thread | None = None
+        self._clipboard_enabled = False
+        self._clipboard_is_owner = False
+        self._clipboard_payloads: dict[str, bytes] = {}
         atexit.register(self.close)
 
     def info(self) -> JsonDict:
@@ -543,6 +551,20 @@ class _MutterRemoteDesktopInput:
 
     def close(self) -> None:
         with self._lock:
+            if self._clipboard_proxy is not None and self._clipboard_enabled:
+                try:
+                    self._clipboard_proxy.call_sync(
+                        "DisableClipboard",
+                        None,
+                        Gio.DBusCallFlags.NONE,
+                        5_000,
+                        None,
+                    )
+                except Exception:
+                    pass
+            if self._clipboard_loop is not None:
+                self._clipboard_loop.quit()
+
             if self._rd_session is not None and self._started:
                 try:
                     self._rd_session.call_sync("Stop", None, Gio.DBusCallFlags.NONE, -1, None)
@@ -553,6 +575,13 @@ class _MutterRemoteDesktopInput:
             self._stream_path = None
             self._stage_area = None
             self._started = False
+            self._clipboard_proxy = None
+            self._clipboard_context = None
+            self._clipboard_loop = None
+            self._clipboard_thread = None
+            self._clipboard_enabled = False
+            self._clipboard_is_owner = False
+            self._clipboard_payloads.clear()
 
     def _root_proxy(self) -> Gio.DBusProxy:
         if self._rd_proxy is None:
@@ -735,6 +764,250 @@ class _MutterRemoteDesktopInput:
 
         msg = f"Failed to call {method_name!r} on the remote desktop session"
         raise RuntimeError(msg)
+
+    def _clipboard_signal_worker(
+        self,
+        session_path: str,
+        ready: threading.Event,
+        failure: list[Exception],
+    ) -> None:
+        context = GLib.MainContext()
+        context.push_thread_default()
+        try:
+            proxy = self._dbus_proxy(
+                MUTTER_REMOTE_DESKTOP_BUS,
+                session_path,
+                MUTTER_REMOTE_DESKTOP_SESSION_IFACE,
+            )
+            proxy.connect("g-signal", self._on_clipboard_signal)
+            loop = GLib.MainLoop.new(context, False)
+            self._clipboard_context = context
+            self._clipboard_proxy = proxy
+            self._clipboard_loop = loop
+            ready.set()
+            loop.run()
+        except Exception as exc:
+            failure.append(exc)
+            ready.set()
+        finally:
+            context.pop_thread_default()
+
+    def _start_clipboard_signal_worker(self, session_path: str) -> None:
+        if self._clipboard_proxy is not None:
+            return
+
+        ready = threading.Event()
+        failure: list[Exception] = []
+        thread = threading.Thread(
+            target=self._clipboard_signal_worker,
+            args=(session_path, ready, failure),
+            name="gnome-ui-mcp-clipboard",
+            daemon=True,
+        )
+        self._clipboard_thread = thread
+        thread.start()
+        if not ready.wait(5):
+            msg = "Timed out starting the Mutter clipboard signal worker"
+            raise RuntimeError(msg)
+        if failure:
+            raise RuntimeError("Failed to start the Mutter clipboard signal worker") from failure[0]
+        if self._clipboard_proxy is None:
+            msg = "Mutter clipboard proxy is not available"
+            raise RuntimeError(msg)
+
+    def _ensure_clipboard(self) -> Gio.DBusProxy:
+        with self._lock:
+            self._ensure_session()
+            if self._rd_session is None:
+                msg = "Remote desktop session is not available"
+                raise RuntimeError(msg)
+            self._start_clipboard_signal_worker(self._rd_session.get_object_path())
+            if self._clipboard_proxy is None:
+                msg = "Mutter clipboard proxy is not available"
+                raise RuntimeError(msg)
+            if not self._clipboard_enabled:
+                self._clipboard_proxy.call_sync(
+                    "EnableClipboard",
+                    GLib.Variant("(a{sv})", ({},)),
+                    Gio.DBusCallFlags.NONE,
+                    5_000,
+                    None,
+                )
+                self._clipboard_enabled = True
+            return self._clipboard_proxy
+
+    def _on_clipboard_signal(
+        self,
+        proxy: Gio.DBusProxy,
+        _sender_name: str,
+        signal_name: str,
+        parameters: GLib.Variant,
+    ) -> None:
+        if signal_name == "SelectionOwnerChanged":
+            options = parameters.unpack()[0]
+            with self._lock:
+                self._clipboard_is_owner = bool(options.get("session-is-owner", False))
+            return
+        if signal_name != "SelectionTransfer":
+            return
+
+        mime_type, serial = parameters.unpack()
+        with self._lock:
+            payload = self._clipboard_payloads.get(str(mime_type))
+        thread = threading.Thread(
+            target=self._serve_clipboard_transfer,
+            args=(proxy, int(serial), payload),
+            name="gnome-ui-mcp-clipboard-transfer",
+            daemon=True,
+        )
+        thread.start()
+
+    def _serve_clipboard_transfer(
+        self,
+        proxy: Gio.DBusProxy,
+        serial: int,
+        payload: bytes | None,
+    ) -> None:
+        success = False
+        fd = -1
+        try:
+            result, fd_list = proxy.call_with_unix_fd_list_sync(
+                "SelectionWrite",
+                GLib.Variant("(u)", (serial,)),
+                Gio.DBusCallFlags.NONE,
+                5_000,
+                None,
+                None,
+            )
+            fd = fd_list.get(int(result.unpack()[0]))
+            if payload is not None:
+                view = memoryview(payload)
+                while view:
+                    written = os.write(fd, view)
+                    view = view[written:]
+                success = True
+        except Exception:
+            success = False
+        finally:
+            if fd >= 0:
+                os.close(fd)
+            try:
+                proxy.call_sync(
+                    "SelectionWriteDone",
+                    GLib.Variant("(ub)", (serial, success)),
+                    Gio.DBusCallFlags.NONE,
+                    5_000,
+                    None,
+                )
+            except Exception:
+                pass
+
+    @staticmethod
+    def _read_clipboard_fd(fd: int) -> bytes:
+        chunks: list[bytes] = []
+        size = 0
+        deadline = time.monotonic() + 5
+        while True:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise TimeoutError("Mutter clipboard transfer timed out")
+            readable, _, _ = select.select([fd], [], [], remaining)
+            if not readable:
+                raise TimeoutError("Mutter clipboard transfer timed out")
+            chunk = os.read(fd, 64 * 1024)
+            if not chunk:
+                return b"".join(chunks)
+            size += len(chunk)
+            if size > 16 * 1024 * 1024:
+                raise RuntimeError("Mutter clipboard content exceeds 16 MiB")
+            chunks.append(chunk)
+
+    def clipboard_read(self, mime_type: str) -> JsonDict:
+        proxy = self._ensure_clipboard()
+        with self._lock:
+            owned_payload = (
+                self._clipboard_payloads.get(mime_type) if self._clipboard_is_owner else None
+            )
+        if owned_payload is not None:
+            payload = owned_payload
+        else:
+            fd = -1
+            try:
+                result, fd_list = proxy.call_with_unix_fd_list_sync(
+                    "SelectionRead",
+                    GLib.Variant("(s)", (mime_type,)),
+                    Gio.DBusCallFlags.NONE,
+                    5_000,
+                    None,
+                    None,
+                )
+                fd = fd_list.get(int(result.unpack()[0]))
+                payload = self._read_clipboard_fd(fd)
+            except GLib.Error as exc:
+                if "No selection owner available" in str(exc):
+                    return {
+                        "success": True,
+                        "text": None,
+                        "selection": "clipboard",
+                        "mime_type": mime_type,
+                    }
+                return {"success": False, "error": str(exc)}
+            except Exception as exc:
+                return {"success": False, "error": str(exc)}
+            finally:
+                if fd >= 0:
+                    os.close(fd)
+
+        if mime_type.startswith("text/"):
+            return {
+                "success": True,
+                "text": payload.decode("utf-8"),
+                "selection": "clipboard",
+                "mime_type": mime_type,
+            }
+
+        import base64 as _base64
+
+        return {
+            "success": True,
+            "data_base64": _base64.b64encode(payload).decode("ascii"),
+            "data_length": len(payload),
+            "selection": "clipboard",
+            "mime_type": mime_type,
+        }
+
+    def clipboard_write(self, text: str, mime_type: str) -> JsonDict:
+        proxy = self._ensure_clipboard()
+        if mime_type.startswith("text/"):
+            payload = text.encode("utf-8")
+        else:
+            import base64 as _base64
+
+            try:
+                payload = _base64.b64decode(text)
+            except Exception:
+                payload = text.encode("utf-8")
+
+        with self._lock:
+            self._clipboard_payloads = {mime_type: payload}
+            proxy.call_sync(
+                "SetSelection",
+                GLib.Variant(
+                    "(a{sv})",
+                    ({"mime-types": GLib.Variant("as", [mime_type])},),
+                ),
+                Gio.DBusCallFlags.NONE,
+                5_000,
+                None,
+            )
+            self._clipboard_is_owner = True
+        return {
+            "success": True,
+            "text_length": len(text),
+            "selection": "clipboard",
+            "mime_type": mime_type,
+            "backend": "mutter-remote-desktop",
+        }
 
 
 _REMOTE_INPUT = _MutterRemoteDesktopInput()
@@ -1694,6 +1967,9 @@ def clipboard_read(
         msg = f"selection must be 'clipboard' or 'primary' (got {selection!r})"
         raise ValueError(msg)
 
+    if selection == "clipboard":
+        return _REMOTE_INPUT.clipboard_read(mime_type)
+
     if not shutil.which("wl-paste"):
         return {"success": False, "error": "wl-paste not found (install wl-clipboard)"}
 
@@ -1703,14 +1979,22 @@ def clipboard_read(
 
     is_text = mime_type.startswith("text/")
 
-    result = subprocess.run(
-        cmd,
-        capture_output=True,
-        text=is_text,
-        check=False,
-        env=_child_process_env(),
-        timeout=5,
-    )
+    try:
+        result = subprocess.run(
+            cmd,
+            capture_output=True,
+            text=is_text,
+            check=False,
+            env=_child_process_env(),
+            timeout=5,
+        )
+    except subprocess.TimeoutExpired:
+        return {
+            "success": False,
+            "error": "wl-paste timed out reading the primary selection",
+            "selection": selection,
+            "mime_type": mime_type,
+        }
     if result.returncode != 0:
         return {
             "success": True,
@@ -1746,6 +2030,9 @@ def clipboard_write(
     if selection not in _VALID_SELECTIONS:
         msg = f"selection must be 'clipboard' or 'primary' (got {selection!r})"
         raise ValueError(msg)
+
+    if selection == "clipboard":
+        return _REMOTE_INPUT.clipboard_write(text, mime_type)
 
     if not shutil.which("wl-copy"):
         return {"success": False, "error": "wl-copy not found (install wl-clipboard)"}

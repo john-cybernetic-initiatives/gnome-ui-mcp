@@ -3,6 +3,15 @@
 This file records fork-only changes. Upstream release history remains in
 `CHANGELOG.md`.
 
+## mesh-v0.5.0-6 — 2026-07-23
+
+- Route the regular GNOME Wayland clipboard through the MCP's existing Mutter
+  RemoteDesktop session. This fixes headless `wl-paste` reads that wait forever
+  because the service has no focused Wayland surface, and serves written data
+  through Mutter's scoped file-descriptor transfer API.
+- Keep the legacy `wl-clipboard` path only for the separate PRIMARY selection,
+  which Mutter's RemoteDesktop clipboard interface does not represent.
+
 ## mesh-v0.5.0-5 — 2026-07-23
 
 - Route authenticated HTTP screenshot and OCR capture through the scoped XDG
